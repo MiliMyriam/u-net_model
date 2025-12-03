@@ -1,0 +1,55 @@
+{
+  "report_id": "FIRE-2024-001",
+  "report_type": "fire",
+  "type_valid": true,
+  "coordinates": {
+    "lat": 40.6892,
+    "lon": -74.0445
+  },
+  "skyfi_url": "https://app.skyfi.com/tasking?s=DAY&r=VERY+HIGH&aoi=POLYGON+%28%28-74.0245+40.7092%2C+-74.0245+40.6692%2C+-74.0645+40.6692%2C+-74.0645+40.7092%2C+-74.0245+40.7092%29%29",
+  "screenshot": "report_FIRE-2024-001_1764795422.png",
+  "segmentation_results": {
+    "detected_classes": [
+      {
+        "class_id": 0,
+        "class_name": "Building",
+        "pixels": 5548,
+        "percentage": 8.47
+      },
+      {
+        "class_id": 1,
+        "class_name": "Land",
+        "pixels": 18642,
+        "percentage": 28.45
+      },
+      {
+        "class_id": 2,
+        "class_name": "Road",
+        "pixels": 566,
+        "percentage": 0.86
+      },
+      {
+        "class_id": 3,
+        "class_name": "Vegetation",
+        "pixels": 5437,
+        "percentage": 8.3
+      },
+      {
+        "class_id": 4,
+        "class_name": "Water",
+        "pixels": 35311,
+        "percentage": 53.88
+      },
+      {
+        "class_id": 5,
+        "class_name": "Unlabeled",
+        "pixels": 32,
+        "percentage": 0.05
+      }
+    ],
+    "class_match_found": true,
+    "confidence_threshold": 0.3
+  },
+  "verification_status": "VERIFIED",
+  "timestamp": 1764795422
+}
