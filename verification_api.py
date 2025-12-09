@@ -78,11 +78,11 @@ CLASS_NAMES = [
 VALID_REPORT_TYPES = ["Danger", "Shelter", "Resource", "MedicalNeed","Resource spot"]
 
 CLASS_TO_REPORT_TYPE = {
-    "Building": ["building"],
-    "Land": ["land", "flood"],
+    "Building": ["Shelter"],
+    "Land": ["land"],
     "Road": ["road"],
-    "Vegetation": ["vegetation", "fire"],
-    "Water": ["water", "flood"]
+    "Vegetation": ["Resource spot"],
+    "Water": ["water"]
 }
 
 # =========================
@@ -149,28 +149,22 @@ def segment_image(image_path, confidence_threshold=0.3):
     
     try:
         img = Image.open(image_path).convert("RGB")
-        
-        # Resize to model input size
         resized = img.resize((256, 256))
         img_np = np.array(resized) / 255.0
         batch = np.expand_dims(img_np, 0)
         
-        # Predict
         pred = satellite_model.predict(batch, verbose=0)
         mask = np.argmax(pred, axis=-1)[0]
         conf = np.max(pred, axis=-1)[0]
         
-        # Apply confidence threshold
         mask[conf < confidence_threshold] = 5
         
-        # Calculate percentages
         unique, counts = np.unique(mask, return_counts=True)
         total = mask.size
         
         class_percentages = {}
         for cls_idx, count in zip(unique, counts):
-            percentage = (count / total) * 100
-            class_percentages[CLASS_NAMES[cls_idx]] = percentage
+            class_percentages[CLASS_NAMES[cls_idx]] = (count / total) * 100
         
         return list(unique), class_percentages
     
@@ -181,17 +175,25 @@ def segment_image(image_path, confidence_threshold=0.3):
 def check_class_match_with_threshold(detected_classes, class_percentages, report_type, threshold=3.0):
     """
     Check if detected classes match report type AND exceed threshold percentage.
-    
-    Returns:
-        bool: True if match found with percentage > threshold
+    If no mapping is found in CLASS_TO_REPORT_TYPE, return False immediately.
     """
-    report_type = report_type.lower()
+    report_type_lower = report_type.lower()
+    
+    # Check if report type exists in any mapping
+    report_found_in_mapping = any(
+        report_type_lower in [t.lower() for t in CLASS_TO_REPORT_TYPE.get(CLASS_NAMES[cls_idx], [])]
+        for cls_idx in detected_classes
+    )
+    
+    if not report_found_in_mapping:
+        print(f"❌ Report type '{report_type}' not found in CLASS_TO_REPORT_TYPE for detected classes")
+        return False
     
     for cls_idx in detected_classes:
         cls_name = CLASS_NAMES[cls_idx]
         matching_types = CLASS_TO_REPORT_TYPE.get(cls_name, [])
         
-        if report_type in matching_types:
+        if report_type_lower in [t.lower() for t in matching_types]:
             percentage = class_percentages.get(cls_name, 0)
             if percentage > threshold:
                 print(f"   ✅ Match found: {cls_name} = {percentage:.2f}% (threshold: {threshold}%)")
@@ -203,21 +205,15 @@ def check_class_match_with_threshold(detected_classes, class_percentages, report
 # Main Verification Function
 # =========================
 def verify_report(report_id, report_type, lat, lon, confidence_threshold=0.3, percentage_threshold=3.0):
-    """
-    Verify a report and return report_id + boolean result.
-    If report_type is 'MedicalNeed', return False by default.
-    """
-    
     print(f"\n🔍 Processing: {report_id}")
     
-    # Validate report type
     report_type_lower = report_type.lower()
     
     if report_type_lower not in [r.lower() for r in VALID_REPORT_TYPES]:
         print(f"❌ Invalid type: {report_type}")
         return {"report_id": str(report_id), "verified": False}
-
-    # Special logic for MedicalNeed: always return False
+    
+    # Special logic for MedicalNeed
     if report_type_lower == "medicalneed":
         print("⚠️ Report type is MedicalNeed → automatically unverified")
         return {"report_id": str(report_id), "verified": False}
@@ -231,14 +227,12 @@ def verify_report(report_id, report_type, lat, lon, confidence_threshold=0.3, pe
         print(f"❌ Screenshot failed")
         return {"report_id": str(report_id), "verified": False}
     
-    # Segment the image
     detected_classes, class_percentages = segment_image(screenshot_path, confidence_threshold)
     
     if detected_classes is None:
         print(f"❌ Segmentation failed")
         return {"report_id": str(report_id), "verified": False}
     
-    # Check if class matches and exceeds threshold
     verified = check_class_match_with_threshold(
         detected_classes, 
         class_percentages, 
@@ -247,23 +241,12 @@ def verify_report(report_id, report_type, lat, lon, confidence_threshold=0.3, pe
     )
     
     print(f"📊 Result: {verified}")
-    
     return {"report_id": str(report_id), "verified": verified}
 
 # =========================
 # Batch Processing
 # =========================
 def verify_batch(reports_list, percentage_threshold=3.0):
-    """
-    Process multiple reports.
-    
-    Args:
-        reports_list: List of dicts with keys: report_id, report_type, lat, lon
-        percentage_threshold: Minimum percentage for match
-    
-    Returns:
-        list: List of {"report_id": str, "verified": bool}
-    """
     results = []
     for report in reports_list:
         result = verify_report(
@@ -292,7 +275,6 @@ if __name__ == "__main__":
         lon=-74.0445,
         percentage_threshold=3.0
     )
-    
     print(f"\n✅ Result: {result}")
     
     # Batch processing
