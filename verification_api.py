@@ -75,14 +75,16 @@ CLASS_NAMES = [
     "Water", "Unlabeled", "Background"
 ]
 
-VALID_REPORT_TYPES = ["Danger", "Shelter", "Resource", "MedicalNeed","Resource spot"]
+# Defines what is allowed to enter the pipeline
+VALID_REPORT_TYPES = ["Danger", "Shelter", "Resource", "MedicalNeed", "Resource spot"]
 
+# Defines what requires satellite verification and what to look for
 CLASS_TO_REPORT_TYPE = {
     "Building": ["Shelter"],
     "Land": ["Land"],
     "Road": ["Road"],
-    "Vegetation": ["Resource spot"],
-    "Water": ["Water"]
+    "Vegetation": ["Resource spot", "Resource"], # Added "Resource" to map here
+    "Water": ["Water", "Resource"]               # Added "Resource" to map here
 }
 
 # =========================
@@ -165,16 +167,12 @@ def segment_image(image_path, confidence_threshold=0.3):
         return None, None
 
 def check_class_match_with_threshold(detected_classes, class_percentages, report_type, threshold=3.0):
-    """
-    Match report_type either with mapped report types or directly with model class name.
-    """
     report_type_lower = report_type.lower()
     
     for cls_idx in detected_classes:
         cls_name = CLASS_NAMES[cls_idx]
         mapped_types = [t.lower() for t in CLASS_TO_REPORT_TYPE.get(cls_name, [])]
         
-        # Match if report_type is in mapped types OR equals class name
         if report_type_lower in mapped_types or report_type_lower == cls_name.lower():
             percentage = class_percentages.get(cls_name, 0)
             if percentage > threshold:
@@ -188,17 +186,33 @@ def check_class_match_with_threshold(detected_classes, class_percentages, report
 # Main Verification Function
 # =========================
 def verify_report(report_id, report_type, lat, lon, confidence_threshold=0.3, percentage_threshold=3.0):
-    print(f"\n🔍 Processing: {report_id}")
-    
+    print(f"\n🔍 Processing: {report_id} | Type: {report_type}")
     report_type_lower = report_type.lower()
     
-    if report_type_lower not in [r.lower() for r in VALID_REPORT_TYPES]:
+    # 1. Validation Check: If it's not in the allowed list, reject as Bad Request
+    valid_types_lower = [t.lower() for t in VALID_REPORT_TYPES]
+    if report_type_lower not in valid_types_lower:
         print(f"❌ Invalid type: {report_type}")
-        return {"report_id": str(report_id), "verified": False}
-    
-    if report_type_lower == "medicalneed":
-        print("⚠️ Report type is MedicalNeed → automatically unverified")
-        return {"report_id": str(report_id), "verified": False}
+        return {
+            "report_id": str(report_id), 
+            "verified": False, 
+            "status": 400, 
+            "message": "Invalid report type"
+        }
+
+    # 2. Logic for MedicalNeed and Danger
+    # ALWAYS ACCEPT (Status 200), BUT VERIFIED IS FALSE by default (Skip satellite)
+    if report_type_lower in ["medicalneed", "danger"]:
+        print(f"⚠️  Type '{report_type}' detected. Skipping satellite. Returning verified=False, Status=200.")
+        return {
+            "report_id": str(report_id), 
+            "verified": False, 
+            "status": 200,
+            "message": "Manual verification required for this type"
+        }
+
+    # 3. Logic for Shelter, Resource, etc. (Proceed with Satellite)
+    print(f"🛰️  Initiating Satellite Verification for {report_type}...")
     
     skyfi_url = generate_skyfi_url(lat, lon)
     screenshot_name = f"report_{report_id}_{int(time.time())}.png"
@@ -206,13 +220,23 @@ def verify_report(report_id, report_type, lat, lon, confidence_threshold=0.3, pe
     
     if not screenshot_path:
         print(f"❌ Screenshot failed")
-        return {"report_id": str(report_id), "verified": False}
+        return {
+            "report_id": str(report_id), 
+            "verified": False, 
+            "status": 500,
+            "message": "Satellite image capture failed"
+        }
     
     detected_classes, class_percentages = segment_image(screenshot_path, confidence_threshold)
     
     if detected_classes is None:
         print(f"❌ Segmentation failed")
-        return {"report_id": str(report_id), "verified": False}
+        return {
+            "report_id": str(report_id), 
+            "verified": False, 
+            "status": 500,
+            "message": "Model processing failed"
+        }
     
     verified = check_class_match_with_threshold(
         detected_classes, 
@@ -222,7 +246,12 @@ def verify_report(report_id, report_type, lat, lon, confidence_threshold=0.3, pe
     )
     
     print(f"📊 Result: {verified}")
-    return {"report_id": str(report_id), "verified": verified}
+    return {
+        "report_id": str(report_id), 
+        "verified": verified, 
+        "status": 200,
+        "message": "Verification complete"
+    }
 
 # =========================
 # Batch Processing
@@ -248,8 +277,16 @@ if __name__ == "__main__":
     print("=" * 60)
     
     test_reports = [
+        # Should run satellite logic
         {"report_id": "BUILD-001", "report_type": "building", "lat": 30.8584, "lon": 10.2945},
+        # Should run satellite logic
         {"report_id": "SHELTER-001", "report_type": "shelter", "lat": 30.8584, "lon": 10.2945},
+        # Should SKIP satellite, return verified: False, Status: 200
+        {"report_id": "MED-001", "report_type": "MedicalNeed", "lat": 51.5074, "lon": -0.1278},
+        # Should SKIP satellite, return verified: False, Status: 200
+        {"report_id": "DANGER-001", "report_type": "Danger", "lat": 40.7128, "lon": -74.0060},
+        # Should Fail (Invalid Type)
+        {"report_id": "INVALID-001", "report_type": "UFO_Sighting", "lat": 0, "lon": 0}
     ]
     
     batch_results = verify_batch(test_reports, percentage_threshold=3.0)
