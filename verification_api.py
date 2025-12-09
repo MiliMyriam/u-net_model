@@ -75,7 +75,7 @@ CLASS_NAMES = [
     "Water", "Unlabeled", "Background"
 ]
 
-VALID_REPORT_TYPES = ["fire", "flood", "building", "road", "vegetation", "water", "land"]
+VALID_REPORT_TYPES = ["Danger", "Shelter", "Resource", "MedicalNeed","Resource spot"]
 
 CLASS_TO_REPORT_TYPE = {
     "Building": ["building"],
@@ -205,24 +205,21 @@ def check_class_match_with_threshold(detected_classes, class_percentages, report
 def verify_report(report_id, report_type, lat, lon, confidence_threshold=0.3, percentage_threshold=3.0):
     """
     Verify a report and return report_id + boolean result.
-    
-    Args:
-        report_id: Unique report identifier
-        report_type: Type of report (fire, flood, building, etc.)
-        lat: Latitude coordinate
-        lon: Longitude coordinate
-        confidence_threshold: Confidence threshold for segmentation
-        percentage_threshold: Minimum percentage for match (default: 3%)
-    
-    Returns:
-        dict: {"report_id": str, "verified": bool}
+    If report_type is 'MedicalNeed', return False by default.
     """
     
     print(f"\n🔍 Processing: {report_id}")
     
     # Validate report type
-    if report_type.lower() not in VALID_REPORT_TYPES:
+    report_type_lower = report_type.lower()
+    
+    if report_type_lower not in [r.lower() for r in VALID_REPORT_TYPES]:
         print(f"❌ Invalid type: {report_type}")
+        return {"report_id": str(report_id), "verified": False}
+
+    # Special logic for MedicalNeed: always return False
+    if report_type_lower == "medicalneed":
+        print("⚠️ Report type is MedicalNeed → automatically unverified")
         return {"report_id": str(report_id), "verified": False}
     
     # Generate SkyFi URL and capture screenshot
@@ -302,7 +299,8 @@ if __name__ == "__main__":
     test_reports = [
         {"report_id": "FIRE-001", "report_type": "fire", "lat": 40.6892, "lon": -74.0445},
         {"report_id": "FLOOD-001", "report_type": "flood", "lat": 34.0522, "lon": -118.2437},
-        {"report_id": "BUILD-001", "report_type": "building", "lat": 48.8584, "lon": 2.2945}
+        {"report_id": "BUILD-001", "report_type": "building", "lat": 48.8584, "lon": 2.2945},
+        {"report_id": "MED-001", "report_type": "MedicalNeed", "lat": 51.5074, "lon": -0.1278}
     ]
     
     batch_results = verify_batch(test_reports, percentage_threshold=3.0)
