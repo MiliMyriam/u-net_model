@@ -79,17 +79,16 @@ VALID_REPORT_TYPES = ["Danger", "Shelter", "Resource", "MedicalNeed","Resource s
 
 CLASS_TO_REPORT_TYPE = {
     "Building": ["Shelter"],
-    "Land": ["land"],
-    "Road": ["road"],
+    "Land": ["Land"],
+    "Road": ["Road"],
     "Vegetation": ["Resource spot"],
-    "Water": ["water"]
+    "Water": ["Water"]
 }
 
 # =========================
 # SkyFi Functions
 # =========================
 def generate_skyfi_url(lat, lon, delta=0.02):
-    """Generate SkyFi URL with AOI polygon."""
     min_lon, max_lon = lon - delta, lon + delta
     min_lat, max_lat = lat - delta, lat + delta
     
@@ -107,7 +106,6 @@ def generate_skyfi_url(lat, lon, delta=0.02):
     return f"https://app.skyfi.com/tasking?s=DAY&r=VERY+HIGH&aoi={encoded}"
 
 def capture_screenshot(url, filename="skyfi_screenshot.png", crop_center=False):
-    """Capture and save screenshot from SkyFi URL."""
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
@@ -138,12 +136,6 @@ def capture_screenshot(url, filename="skyfi_screenshot.png", crop_center=False):
 # Model Segmentation
 # =========================
 def segment_image(image_path, confidence_threshold=0.3):
-    """
-    Segment satellite image and return detected classes with percentages.
-    
-    Returns:
-        tuple: (detected_classes, class_percentages)
-    """
     if satellite_model is None:
         return None, None
     
@@ -174,31 +166,22 @@ def segment_image(image_path, confidence_threshold=0.3):
 
 def check_class_match_with_threshold(detected_classes, class_percentages, report_type, threshold=3.0):
     """
-    Check if detected classes match report type AND exceed threshold percentage.
-    If no mapping is found in CLASS_TO_REPORT_TYPE, return False immediately.
+    Match report_type either with mapped report types or directly with model class name.
     """
     report_type_lower = report_type.lower()
     
-    # Check if report type exists in any mapping
-    report_found_in_mapping = any(
-        report_type_lower in [t.lower() for t in CLASS_TO_REPORT_TYPE.get(CLASS_NAMES[cls_idx], [])]
-        for cls_idx in detected_classes
-    )
-    
-    if not report_found_in_mapping:
-        print(f"❌ Report type '{report_type}' not found in CLASS_TO_REPORT_TYPE for detected classes")
-        return False
-    
     for cls_idx in detected_classes:
         cls_name = CLASS_NAMES[cls_idx]
-        matching_types = CLASS_TO_REPORT_TYPE.get(cls_name, [])
+        mapped_types = [t.lower() for t in CLASS_TO_REPORT_TYPE.get(cls_name, [])]
         
-        if report_type_lower in [t.lower() for t in matching_types]:
+        # Match if report_type is in mapped types OR equals class name
+        if report_type_lower in mapped_types or report_type_lower == cls_name.lower():
             percentage = class_percentages.get(cls_name, 0)
             if percentage > threshold:
                 print(f"   ✅ Match found: {cls_name} = {percentage:.2f}% (threshold: {threshold}%)")
                 return True
     
+    print(f"❌ No matching class found for report type '{report_type}' above threshold")
     return False
 
 # =========================
@@ -213,12 +196,10 @@ def verify_report(report_id, report_type, lat, lon, confidence_threshold=0.3, pe
         print(f"❌ Invalid type: {report_type}")
         return {"report_id": str(report_id), "verified": False}
     
-    # Special logic for MedicalNeed
     if report_type_lower == "medicalneed":
         print("⚠️ Report type is MedicalNeed → automatically unverified")
         return {"report_id": str(report_id), "verified": False}
     
-    # Generate SkyFi URL and capture screenshot
     skyfi_url = generate_skyfi_url(lat, lon)
     screenshot_name = f"report_{report_id}_{int(time.time())}.png"
     screenshot_path = capture_screenshot(skyfi_url, screenshot_name, crop_center=True)
@@ -257,7 +238,6 @@ def verify_batch(reports_list, percentage_threshold=3.0):
             percentage_threshold=percentage_threshold
         )
         results.append(result)
-    
     return results
 
 # =========================
@@ -267,22 +247,9 @@ if __name__ == "__main__":
     print("🛰️  Satellite Report Verification System")
     print("=" * 60)
     
-    # Single report
-    result = verify_report(
-        report_id="FIRE-2024-001",
-        report_type="fire",
-        lat=40.6892,
-        lon=-74.0445,
-        percentage_threshold=3.0
-    )
-    print(f"\n✅ Result: {result}")
-    
-    # Batch processing
     test_reports = [
-        {"report_id": "FIRE-001", "report_type": "fire", "lat": 40.6892, "lon": -74.0445},
-        {"report_id": "FLOOD-001", "report_type": "flood", "lat": 34.0522, "lon": -118.2437},
-        {"report_id": "BUILD-001", "report_type": "building", "lat": 48.8584, "lon": 2.2945},
-        {"report_id": "MED-001", "report_type": "MedicalNeed", "lat": 51.5074, "lon": -0.1278}
+        {"report_id": "BUILD-001", "report_type": "building", "lat": 30.8584, "lon": 10.2945},
+        {"report_id": "SHELTER-001", "report_type": "shelter", "lat": 30.8584, "lon": 10.2945},
     ]
     
     batch_results = verify_batch(test_reports, percentage_threshold=3.0)
