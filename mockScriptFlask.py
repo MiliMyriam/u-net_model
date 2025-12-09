@@ -1,103 +1,99 @@
-from flask import Flask, request, jsonify
-import requests
+import os
+import json
 import time
+import requests
+from azure.servicebus import ServiceBusClient, ServiceBusReceiveMode
+from verification_api import verify_report  # Keep your existing logic file!
 
-# Import the logic from the previous file (saved as verification_api.py)
-from verification_api import verify_report
+# 1. Get Configuration from Environment Variables (We set these in Azure Portal)
+CONNECTION_STR = os.environ.get("SB_CONNECTION_STRING")
+QUEUE_NAME = os.environ.get("QUEUE_NAME")
 
-app = Flask(__name__)
+if not CONNECTION_STR or not QUEUE_NAME:
+    print("❌ Error: Missing Environment Variables (SB_CONNECTION_STRING or QUEUE_NAME)")
+    exit(1)
 
-# ===============================================
-# Primary API Endpoint
-# ===============================================
-@app.route('/api/verify', methods=['POST'])
-def verify_report_endpoint():
+def process_message(msg):
     """
-    API endpoint that receives a report, calls the verification logic,
-    and sends the result to a webhook.
+    This function takes 1 message from the queue and processes it.
     """
+    print(f"📥 Received message: {msg}")
     
-    # 1. Parse Request
     try:
-        data = request.get_json(force=True)
-        if not data:
-            return jsonify({"error": "Empty request body"}), 400
-            
+        # A. Parse the Queue Message
+        body_str = str(msg)
+        data = json.loads(body_str)
+        
         report_id = data.get('reportId')
         report_type = data.get('type')
         longitude = data.get('longitude')
         latitude = data.get('latitude')
-        webhook_url = data.get('callbackUrl')
+        webhook_url = data.get('callbackUrl') # .NET must send this!
 
-        # Basic Validation
-        if not all([report_id, report_type, longitude, latitude, webhook_url]):
-            return jsonify({"error": "Missing required fields"}), 400
+        print(f"   Processing Report ID: {report_id} | Type: {report_type}")
 
-        # Validate Coordinates
-        if not (-90 <= float(latitude) <= 90 and -180 <= float(longitude) <= 180):
-            return jsonify({"error": "Invalid coordinates"}), 400
+        # B. Run the Verification Logic (Same as before)
+        try:
+            result = verify_report(
+                report_id=report_id,
+                report_type=report_type, 
+                lat=float(latitude),
+                lon=float(longitude),
+                percentage_threshold=3.0
+            )
+        except Exception as e:
+            print(f"   ❌ Logic Error: {e}")
+            return # Don't crash, just skip
 
+        # C. Prepare the Result
+        webhook_payload = {
+            "reportId": result["report_id"],
+            "isVerified": result["verified"],
+            "timestamp": time.time(),
+            "message": result["message"]
+        }
+
+        # D. Send Result back to .NET (Using Webhook)
+        if webhook_url:
+            print(f"   📤 Sending result to: {webhook_url}")
+            try:
+                # We retry 3 times just in case .NET is blinking
+                for i in range(3):
+                    response = requests.post(webhook_url, json=webhook_payload, timeout=10)
+                    if response.status_code == 200:
+                        break
+                    time.sleep(1)
+            except Exception as e:
+                print(f"   ⚠️ Webhook failed: {e}")
+        else:
+            print("   ⚠️ No callbackUrl provided in message.")
+
+    except json.JSONDecodeError:
+        print("   ❌ Error: Message was not valid JSON.")
     except Exception as e:
-        return jsonify({"error": f"Request parsing error: {str(e)}"}), 400
-
-    # 2. Call Verification Logic
-    # We pass the raw report_type. The verify_report function handles:
-    # - Checking if it's Danger/Medical (returns verified=False, status=200)
-    # - Checking if it's Shelter/Resource (runs satellite model)
-    # - Checking if it's Invalid (returns status=400)
-    try:
-        result = verify_report(
-            report_id=report_id,
-            report_type=report_type, 
-            lat=float(latitude),
-            lon=float(longitude),
-            percentage_threshold=3.0
-        )
-    except Exception as e:
-        print(f"❌ Internal Error: {e}")
-        return jsonify({"error": "Internal verification error"}), 500
-
-    # 3. Handle Logic Result
-    
-    # If the logic says the input was bad (e.g., type="UFO"), return 400
-    if result.get("status") == 400:
-        return jsonify({"error": result.get("message")}), 400
-        
-    # If the logic failed internally (e.g., screenshot error), return 500
-    if result.get("status") == 500:
-        return jsonify({"error": result.get("message")}), 500
-
-    # 4. Success (Status 200) - Send Webhook
-    # This covers both:
-    # - Verified Satellite matches (verified=True)
-    # - Danger/Medical reports (verified=False, but successful processing)
-    
-    webhook_payload = {
-        "reportId": result["report_id"],
-        "isVerified": result["verified"], # False for Danger/Medical, True/False for others
-        "timestamp": time.time(),
-        "message": result["message"]
-    }
-
-    print(f"📤 Sending webhook to {webhook_url} | Payload: {webhook_payload}")
-
-    try:
-        # Send webhook (Fire and forget, or wait for response)
-        requests.post(webhook_url, json=webhook_payload, timeout=5)
-    except requests.exceptions.RequestException as e:
-        print(f"⚠️ Webhook failed: {e}")
-        # We still return 200 to the caller because WE processed it successfully,
-        # even if the callback server is down.
-
-    return jsonify({
-        "message": "Report processed successfully",
-        "reportId": result["report_id"],
-        "isVerified": result["verified"]
-    }), 200
+        print(f"   ❌ Unknown Error: {e}")
 
 # ===============================================
-# Run
+# Main Worker Loop
 # ===============================================
 if __name__ == '__main__':
-    print("🚀 API Server Running on Port 5000...")
-    app.run(host='0.0.0.0', port=5000)
+    print(f"🚀 AI Worker Started. Listening to: {QUEUE_NAME}")
+    
+    # Create the Client
+    servicebus_client = ServiceBusClient.from_connection_string(conn_str=CONNECTION_STR, logging_enable=True)
+
+    with servicebus_client:
+        # Get the Receiver
+        receiver = servicebus_client.get_queue_receiver(queue_name=QUEUE_NAME)
+        
+        with receiver:
+            # Keep running forever
+            for msg in receiver:
+                # 1. Process the message
+                process_message(msg)
+                
+                # 2. Tell Azure: "I finished this message, delete it from queue"
+                receiver.complete_message(msg)
+                
+                # Note: If Scale to Zero is on, and queue is empty, 
+                # Azure will kill this container automatically after a while.
