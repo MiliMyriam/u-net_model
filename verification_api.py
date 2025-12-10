@@ -74,13 +74,13 @@ CLASS_NAMES = [
     "Building", "Land", "Road", "Vegetation", 
     "Water", "Unlabeled", "Background"
 ]
-VALID_REPORT_TYPES = ["Danger", "Shelter", "Resource", "MedicalNeed", "Resource spot"]
+VALID_REPORT_TYPES = ["Danger","SafeRoad", "Shelter", "Water", "MedicalNeed", "Resource spot"]
 CLASS_TO_REPORT_TYPE = {
     "Building": ["Shelter"],
     "Land": ["Land"],
-    "Road": ["Road"],
-    "Vegetation": ["Resource spot", "Resource"],
-    "Water": ["Water", "Resource"]
+    "Road": ["SafeRoad"],
+    "Vegetation": ["Resource spot"],
+    "Water": ["Water"]
 }
 
 # =========================
